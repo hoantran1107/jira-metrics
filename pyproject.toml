@@ -1,0 +1,16 @@
+[project]
+name = "jira-metrics"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "jira>=3.6.0,<4.0.0",
+    "pandas>=2.0.0",
+    "numpy>=1.26.0",
+    "matplotlib>=3.8.0",
+    "streamlit>=1.37.0",
+    "python-dotenv>=1.0.0",
+    "requests>=2.31.0",
+    "pytz>=2024.1",
+]
