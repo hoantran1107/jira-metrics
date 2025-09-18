@@ -3,13 +3,21 @@ import os
 import streamlit as st
 from dotenv import load_dotenv
 
-from data_processing import (
+from src.ai_feedback import generate_ai_feedback
+from src.confluence_client import create_or_update_page
+from src.data_processing import (
     build_issue_rows_dataframe,
     compute_status_durations_column,
 )
-from jira_client import fetch_issues_for_sprints, get_closed_sprint_ids
-from metrics import compute_all_metrics
-from report import generate_summary_markdown
+from src.jira_client import fetch_issues_for_sprints, get_closed_sprint_ids
+from src.metrics import compute_all_metrics
+from src.rag import retrieve_confluence_context
+from src.report import generate_summary_markdown
+
+try:
+    import streamlit.runtime.caching as st_caching  # type: ignore
+except Exception:  # pragma: no cover
+    st_caching = None
 
 load_dotenv()
 
@@ -66,8 +74,14 @@ if fetch_button:
         )
 
     with st.spinner("Processing data..."):
-        df = build_issue_rows_dataframe(issues)
-        df = compute_status_durations_column(df)
+
+        @st.cache_data(show_spinner=False)
+        def _cached_process(_issues):
+            _df = build_issue_rows_dataframe(_issues)
+            _df = compute_status_durations_column(_df)
+            return _df
+
+        df = _cached_process(issues)
 
     with st.spinner("Computing metrics..."):
         metrics = compute_all_metrics(
@@ -113,7 +127,81 @@ if fetch_button:
         st.info("No blocked status data.")
 
     st.subheader("Summary & Recommendations")
-    st.markdown(generate_summary_markdown(metrics))
+    summary_md = generate_summary_markdown(metrics)
+    st.markdown(summary_md)
+
+    st.divider()
+    st.subheader("AI-Powered Sprint Feedback")
+    colA, colB = st.columns([1, 1])
+    with colA:
+        confluence_space = st.text_input(
+            "Confluence Space Key", value=os.getenv("CONFLUENCE_SPACE_KEY", "")
+        )
+        confluence_parent_id = st.text_input(
+            "Parent Page ID (optional)",
+            value=os.getenv("CONFLUENCE_PARENT_PAGE_ID", ""),
+        )
+        publish_title_default = (
+            f"Sprint Insights - Board {int(board_id)} (Last {int(lookback)})"
+        )
+        page_title = st.text_input("Confluence Page Title", value=publish_title_default)
+        include_rag = st.checkbox("Use Confluence context (RAG)", value=True)
+
+    with colB:
+        generate_btn = st.button("Generate AI Feedback", type="primary")
+        publish_btn = st.button("Publish to Confluence")
+
+    ai_feedback = st.session_state.get("ai_feedback_text")
+    if generate_btn:
+        with st.spinner("Generating AI feedback..."):
+            rag_context = None
+            if include_rag and confluence_space:
+                rag_context = retrieve_confluence_context(
+                    space_key=confluence_space, summary_markdown=summary_md
+                )
+            try:
+                ai_feedback = generate_ai_feedback(
+                    metrics=metrics,
+                    summary_markdown=summary_md,
+                    rag_context=rag_context,
+                )
+                st.session_state["ai_feedback_text"] = ai_feedback
+            except Exception as e:
+                st.error(f"AI generation failed: {e}")
+    if ai_feedback:
+        st.markdown(ai_feedback)
+
+    if publish_btn:
+        if not confluence_space or not page_title:
+            st.error("Provide Confluence space key and page title.")
+        else:
+            with st.spinner("Publishing to Confluence..."):
+                try:
+                    # Combine summary + AI analysis
+                    content_md = f"{summary_md}\n\n---\n\n{ai_feedback or ''}"
+                    # Convert Markdown to basic HTML for storage representation
+                    try:
+                        import markdown as md  # type: ignore
+
+                        content_html = md.markdown(content_md)
+                    except Exception:
+                        # Minimal fallback: wrap in <pre>
+                        content_html = f"<pre>{content_md}</pre>"
+                    result = create_or_update_page(
+                        space_key=confluence_space,
+                        title=page_title,
+                        html_body=content_html,
+                        parent_page_id=confluence_parent_id or None,
+                    )
+                    link = result.get("_links", {}).get("base", "") + result.get(
+                        "_links", {}
+                    ).get("webui", "")
+                    if link:
+                        st.success(f"Published to Confluence: {link}")
+                    else:
+                        st.success("Published to Confluence.")
+                except Exception as e:
+                    st.error(f"Publish failed: {e}")
 
 else:
     st.info("Configure inputs in the sidebar and click 'Fetch / Refresh Data'.")

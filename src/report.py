@@ -1,6 +1,6 @@
 from typing import List
 
-from metrics import MetricsResult
+from src.metrics import MetricsResult
 
 
 def _fmt_days(value) -> str:
@@ -24,12 +24,26 @@ def generate_summary_markdown(m: MetricsResult) -> str:
         )
     lines.append(f"- **Reopen rate**: {m.reopen_rate_pct:.1f}%")
     if not m.throughput.empty:
+
+        def _as_int_string(value) -> str:
+            try:
+                return str(int(value))
+            except Exception:
+                return str(value)
+
         lines.append(
-            f"- **Throughput** (tickets/sprint): {', '.join([f'{int(i)}:{int(v)}' for i, v in m.throughput.items()])}"
+            f"- **Throughput** (tickets/sprint): {', '.join([f'{_as_int_string(i)}:{_as_int_string(v)}' for i, v in m.throughput.items()])}"
         )
     if not m.velocity.empty:
+
+        def _as_float_string(value) -> str:
+            try:
+                return f"{float(value):.1f}"
+            except Exception:
+                return "n/a"
+
         lines.append(
-            f"- **Velocity** (SP/sprint): {', '.join([f'{int(i)}:{float(v):.1f}' for i, v in m.velocity.items()])}"
+            f"- **Velocity** (SP/sprint): {', '.join([f'{_as_int_string(i)}:{_as_float_string(v)}' for i, v in m.velocity.items()])}"
         )
 
     # Basic recommendations heuristics
